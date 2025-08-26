@@ -12,6 +12,7 @@ from tqdm import tqdm
 from model.model_registrar import ModelRegistrar
 from model.trajectron import Trajectron
 import evaluation
+import utils
 
 seed = 0
 np.random.seed(seed)
@@ -26,6 +27,7 @@ parser.add_argument("--data", help="full path to data file", type=str)
 parser.add_argument("--output_path", help="path to output csv file", type=str)
 parser.add_argument("--output_tag", help="name tag for output file", type=str)
 parser.add_argument("--node_type", help="node type to evaluate", type=str)
+parser.add_argument("--prediction_file", help="path to save prediction trajectories", type=str, default=None)
 args = parser.parse_args()
 
 
@@ -68,6 +70,7 @@ if __name__ == "__main__":
         ############### MOST LIKELY ###############
         eval_ade_batch_errors = np.array([])
         eval_fde_batch_errors = np.array([])
+        saved_predictions = [] if args.prediction_file else None
         print("-- Evaluating GMM Grid Sampled (Most Likely)")
         for i, scene in enumerate(scenes):
             print(f"---- Evaluating Scene {i + 1}/{len(scenes)}")
@@ -81,7 +84,7 @@ if __name__ == "__main__":
                                            min_future_timesteps=12,
                                            z_mode=False,
                                            gmm_mode=True,
-                                           full_dist=True)  # This will trigger grid sampling
+                                               full_dist=True)  # This will trigger grid sampling
 
             batch_error_dict = evaluation.compute_batch_statistics(predictions,
                                                                    scene.dt,
@@ -95,11 +98,28 @@ if __name__ == "__main__":
             eval_ade_batch_errors = np.hstack((eval_ade_batch_errors, batch_error_dict[args.node_type]['ade']))
             eval_fde_batch_errors = np.hstack((eval_fde_batch_errors, batch_error_dict[args.node_type]['fde']))
 
+            if saved_predictions is not None:
+                pred_dict, histories_dict, futures_dict = utils.prediction_output_to_trajectories(
+                    predictions, scene.dt, max_hl, ph, prune_ph_to_future=True)
+                for t, node_preds in pred_dict.items():
+                    for node, traj in node_preds.items():
+                        saved_predictions.append({
+                            'scene': i,
+                            'timestep': int(t),
+                            'node_id': node.id,
+                            'history': histories_dict[t][node].tolist(),
+                            'prediction': traj[0].tolist(),
+                            'future': futures_dict[t][node].tolist()
+                        })
+
         print(np.mean(eval_fde_batch_errors))
         pd.DataFrame({'value': eval_ade_batch_errors, 'metric': 'ade', 'type': 'ml'}
                      ).to_csv(os.path.join(args.output_path, args.output_tag + '_ade_most_likely.csv'))
         pd.DataFrame({'value': eval_fde_batch_errors, 'metric': 'fde', 'type': 'ml'}
                      ).to_csv(os.path.join(args.output_path, args.output_tag + '_fde_most_likely.csv'))
+        if saved_predictions is not None:
+            with open(args.prediction_file, 'w') as f:
+                json.dump(saved_predictions, f)
 
 
         ############### MODE Z ###############
