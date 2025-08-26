@@ -6,6 +6,7 @@ import argparse
 import torch
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 sys.path.append("../../trajectron")
 from tqdm import tqdm
@@ -26,6 +27,8 @@ parser.add_argument("--data", help="full path to data file", type=str)
 parser.add_argument("--output_path", help="path to output csv file", type=str)
 parser.add_argument("--output_tag", help="name tag for output file", type=str)
 parser.add_argument("--node_type", help="node type to evaluate", type=str)
+parser.add_argument("--save_predictions", help="directory to store raw prediction npz files", type=str, default=None)
+parser.add_argument("--vis_path", help="directory to save trajectory visualizations", type=str, default=None)
 args = parser.parse_args()
 
 
@@ -40,6 +43,39 @@ def load_model(model_dir, env, ts=100):
     trajectron.set_environment(env)
     trajectron.set_annealing_params()
     return trajectron, hyperparams
+
+
+def save_predictions(predictions, scene, pred_path, vis_path, max_hl):
+    if pred_path is None and vis_path is None:
+        return
+
+    if pred_path is not None:
+        os.makedirs(pred_path, exist_ok=True)
+    if vis_path is not None:
+        os.makedirs(vis_path, exist_ok=True)
+
+    for ts, node_dict in predictions.items():
+        for node, pred in node_dict.items():
+            hist_ts = np.arange(max(ts - max_hl + 1, node.first_timestep), ts + 1)
+            history = node.get(hist_ts, {'position': ['x', 'y']})
+            data = {'history': history, 'predictions': pred[0]}
+
+            safe_id = node.id.replace('/', '_')
+            base = f"{scene.name}_{safe_id}_{ts}"
+
+            if pred_path is not None:
+                np.savez(os.path.join(pred_path, base + '.npz'), **data)
+
+            if vis_path is not None:
+                plt.figure()
+                plt.plot(history[:, 0], history[:, 1], 'b-o', label='history')
+                plt.plot(history[-1, 0], history[-1, 1], 'ro', label='current')
+                for single_pred in data['predictions']:
+                    plt.plot(single_pred[:, 0], single_pred[:, 1], 'g--', alpha=0.3)
+                plt.axis('equal')
+                plt.legend()
+                plt.savefig(os.path.join(vis_path, base + '.png'))
+                plt.close()
 
 
 if __name__ == "__main__":
@@ -83,6 +119,8 @@ if __name__ == "__main__":
                                            gmm_mode=True,
                                            full_dist=True)  # This will trigger grid sampling
 
+            save_predictions(predictions, scene, args.save_predictions, args.vis_path, max_hl)
+
             batch_error_dict = evaluation.compute_batch_statistics(predictions,
                                                                    scene.dt,
                                                                    max_hl=max_hl,
@@ -122,6 +160,8 @@ if __name__ == "__main__":
 
                 if not predictions:
                     continue
+
+                save_predictions(predictions, scene, args.save_predictions, args.vis_path, max_hl)
 
                 batch_error_dict = evaluation.compute_batch_statistics(predictions,
                                                                        scene.dt,
@@ -164,6 +204,8 @@ if __name__ == "__main__":
                 if not predictions:
                     continue
 
+                save_predictions(predictions, scene, args.save_predictions, args.vis_path, max_hl)
+
                 batch_error_dict = evaluation.compute_batch_statistics(predictions,
                                                                        scene.dt,
                                                                        max_hl=max_hl,
@@ -205,6 +247,8 @@ if __name__ == "__main__":
 
                 if not predictions:
                     continue
+
+                save_predictions(predictions, scene, args.save_predictions, args.vis_path, max_hl)
 
                 batch_error_dict = evaluation.compute_batch_statistics(predictions,
                                                                        scene.dt,
